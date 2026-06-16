@@ -4,6 +4,7 @@
 import { Engine, pretty } from '../engine';
 import { Store } from '../state';
 import { MODEL_META, SPECTRUM_ENDS, familyHex } from '../config';
+import { resolveImage } from '../images';
 
 function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -120,6 +121,24 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
     ]);
   }
 
+  function buildPhoto(name: string): HTMLElement {
+    const fig = h('figure', { class: 'photo loading' });
+    const ph = h('div', { class: 'photo-ph' }, [pretty(name).charAt(0).toUpperCase()]);
+    const img = h('img', { class: 'photo-img', alt: pretty(name), loading: 'lazy' }) as HTMLImageElement;
+    const cap = h('figcaption', { class: 'photo-cap' });
+    fig.append(ph, img, cap);
+    resolveImage(name).then((res) => {
+      fig.classList.remove('loading');
+      if (!res) return;
+      img.addEventListener('load', () => fig.classList.add('has-img'));
+      img.addEventListener('error', () => fig.classList.remove('has-img'));
+      img.src = res.url;
+      const link = h('a', { href: res.sourceUrl, target: '_blank', rel: 'noopener' }, [res.source]);
+      cap.replaceChildren(link);
+    });
+    return fig;
+  }
+
   function renderDetail(): void {
     const { selected, model } = store.get();
     if (selected == null) {
@@ -132,17 +151,21 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
       return;
     }
     const name = engine.name(selected);
+    const chips = h(
+      'div',
+      { class: 'chips' },
+      [
+        chip('food_group', engine.labelIndex('food_group', selected)),
+        chip('aroma', engine.labelIndex('aroma', selected)),
+        chip('taste', engine.labelIndex('taste', selected)),
+      ].filter((c): c is HTMLElement => c !== null),
+    );
     const head = h('div', { class: 'detail-head' }, [
-      h('h2', { class: 'detail-name' }, [pretty(name)]),
-      h(
-        'div',
-        { class: 'chips' },
-        [
-          chip('food_group', engine.labelIndex('food_group', selected)),
-          chip('aroma', engine.labelIndex('aroma', selected)),
-          chip('taste', engine.labelIndex('taste', selected)),
-        ].filter((c): c is HTMLElement => c !== null),
-      ),
+      buildPhoto(name),
+      h('div', { class: 'detail-head-text' }, [
+        h('h2', { class: 'detail-name' }, [pretty(name)]),
+        chips,
+      ]),
     ]);
 
     const neighbors = engine.neighbors(selected, model, store.get().neighborK);

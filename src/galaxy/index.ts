@@ -8,6 +8,7 @@ import { ScatterplotLayer, LineLayer, TextLayer } from '@deck.gl/layers';
 import { Engine, pretty } from '../engine';
 import { Store } from '../state';
 import { familyRgb } from '../config';
+import { resolveImage, peekImage } from '../images';
 
 type RGBA = [number, number, number, number];
 
@@ -68,6 +69,75 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     return [...ids];
   }
 
+  // --- Hover preview card (name + thumbnail near the cursor) ---
+  const card = document.createElement('div');
+  card.className = 'hover-card';
+  card.hidden = true;
+  const cardThumb = document.createElement('div');
+  cardThumb.className = 'hover-thumb';
+  const cardPh = document.createElement('div');
+  cardPh.className = 'hover-thumb-ph';
+  const cardImg = document.createElement('img');
+  cardImg.className = 'hover-thumb-img';
+  cardThumb.append(cardPh, cardImg);
+  const cardName = document.createElement('span');
+  cardName.className = 'hover-name';
+  card.append(cardThumb, cardName);
+  (container.parentElement ?? container).append(card);
+
+  let cardIndex = -1;
+  let dwell: number | null = null;
+
+  function setCardImage(url: string, forIndex: number): void {
+    cardImg.onload = () => {
+      if (cardIndex === forIndex) cardThumb.classList.add('has-img');
+    };
+    cardImg.src = url;
+  }
+
+  function showCard(index: number, x: number, y: number): void {
+    card.hidden = false;
+    const w = card.offsetWidth || 180;
+    const h = card.offsetHeight || 56;
+    const maxX = container.clientWidth;
+    const maxY = container.clientHeight;
+    const left = x + 18 + w > maxX ? x - w - 18 : x + 18;
+    const top = y + 18 + h > maxY ? y - h - 18 : y + 18;
+    card.style.left = `${Math.max(8, left)}px`;
+    card.style.top = `${Math.max(8, top)}px`;
+    if (index === cardIndex) return;
+    cardIndex = index;
+    if (dwell != null) clearTimeout(dwell);
+
+    const name = engine.name(index);
+    cardName.textContent = pretty(name);
+    cardThumb.classList.remove('has-img');
+    cardImg.removeAttribute('src');
+    cardPh.textContent = pretty(name).charAt(0).toUpperCase();
+
+    const peeked = peekImage(name);
+    if (peeked) {
+      setCardImage(peeked.url, index);
+    } else if (peeked === undefined) {
+      // Unknown: wait for a short dwell before fetching, to avoid spamming
+      // requests while the pointer sweeps across the cloud.
+      dwell = window.setTimeout(() => {
+        resolveImage(name).then((res) => {
+          if (cardIndex === index && res) setCardImage(res.url, index);
+        });
+      }, 280);
+    }
+  }
+
+  function hideCard(): void {
+    card.hidden = true;
+    cardIndex = -1;
+    if (dwell != null) {
+      clearTimeout(dwell);
+      dwell = null;
+    }
+  }
+
   function buildLayers() {
     const { selected, model, colorBy, hovered } = store.get();
     const trigger = `${colorBy}|${selected}|${hovered}|${model}`;
@@ -88,7 +158,10 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
       pickable: true,
       autoHighlight: false,
       onHover: (info) => {
-        store.set({ hovered: info.index >= 0 ? info.index : null });
+        const idx = info.index >= 0 ? info.index : null;
+        store.set({ hovered: idx });
+        if (idx == null) hideCard();
+        else showCard(idx, info.x, info.y);
       },
       onClick: (info) => {
         if (info.index >= 0) store.set({ selected: info.index });
