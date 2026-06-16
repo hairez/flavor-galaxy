@@ -3,7 +3,7 @@
 // you switch models the whole cloud re-forms and you can watch where a category
 // drifts. Selecting an ingredient draws its constellation of nearest neighbors.
 
-import { Deck, OrthographicView } from '@deck.gl/core';
+import { Deck, OrthographicView, LinearInterpolator } from '@deck.gl/core';
 import { ScatterplotLayer, LineLayer, TextLayer } from '@deck.gl/layers';
 import { Engine, pretty } from '../engine';
 import { Store } from '../state';
@@ -211,15 +211,67 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     return [scatter, links, labels].filter(Boolean);
   }
 
+  // We drive the view state ourselves (controlled mode) so selecting a star can
+  // smoothly fly the camera to it while the controller still handles pan/zoom.
+  // We echo the controller's updates straight back; deck.gl recognises its own
+  // in-flight transition frames, so echoing them never interrupts a fly-to.
+  const flyInterpolator = new LinearInterpolator(['target', 'zoom']);
+  const easeInOut = (t: number): number =>
+    t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+  let viewState: Record<string, unknown> = {
+    target: [0, 0, 0],
+    zoom: 1.6,
+    minZoom: -2,
+    maxZoom: 8,
+  };
+
   const deck = new Deck({
     parent: container,
     views: new OrthographicView({ flipY: false }),
-    initialViewState: { target: [0, 0, 0], zoom: 1.6, minZoom: -2, maxZoom: 8 },
+    viewState,
     controller: { dragRotate: false, doubleClickZoom: true },
+    onViewStateChange: ({ viewState: next }) => {
+      viewState = next as Record<string, unknown>;
+      deck.setProps({ viewState });
+    },
     style: { position: 'absolute', inset: '0' },
     getCursor: ({ isHovering }) => (isHovering ? 'pointer' : 'grab'),
     layers: buildLayers(),
   });
+
+  // Glide the camera so the chosen star sits dead center, zoomed in just enough
+  // to frame its lit-up neighbors. Falls back to a fixed close-up when the
+  // neighbors are tightly packed or absent.
+  function focusOn(index: number): void {
+    const [sx, sy] = pos(index);
+    let dx = 0;
+    let dy = 0;
+    for (const n of neighborList) {
+      const [nx, ny] = pos(n);
+      dx = Math.max(dx, Math.abs(nx - sx));
+      dy = Math.max(dy, Math.abs(ny - sy));
+    }
+    const pad = 0.7; // leave a margin so the constellation doesn't kiss the edges
+    const vw = container.clientWidth || 800;
+    const vh = container.clientHeight || 600;
+    let zoom = 4.2;
+    if (dx > 0 || dy > 0) {
+      const zx = Math.log2((vw * pad) / Math.max(1, 2 * dx));
+      const zy = Math.log2((vh * pad) / Math.max(1, 2 * dy));
+      zoom = Math.min(zx, zy);
+    }
+    zoom = Math.max(2.4, Math.min(5.5, zoom));
+    viewState = {
+      ...viewState,
+      target: [sx, sy, 0],
+      zoom,
+      transitionDuration: 700,
+      transitionInterpolator: flyInterpolator,
+      transitionEasing: easeInOut,
+    };
+    deck.setProps({ viewState });
+  }
 
   function update(): void {
     deck.setProps({ layers: buildLayers() });
@@ -247,6 +299,10 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
 
   store.subscribe((_, changed) => {
     if (changed.has('selected') || changed.has('model')) recomputeNeighbors();
+    if (changed.has('selected')) {
+      const { selected } = store.get();
+      if (selected != null) focusOn(selected);
+    }
     if (changed.has('model')) animateTo(store.get().model);
     else update();
   });
