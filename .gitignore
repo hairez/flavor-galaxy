@@ -1,0 +1,7 @@
+node_modules
+dist
+*.local
+.DS_Store
+.vite
+# Raw model downloads cached by the prep script (re-fetchable from Hugging Face)
+scripts/.cache
