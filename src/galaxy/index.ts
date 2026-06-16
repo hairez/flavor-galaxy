@@ -3,7 +3,7 @@
 // you switch models the whole cloud re-forms and you can watch where a category
 // drifts. Selecting an ingredient draws its constellation of nearest neighbors.
 
-import { Deck, OrthographicView, LinearInterpolator } from '@deck.gl/core';
+import { Deck, OrthographicView } from '@deck.gl/core';
 import { ScatterplotLayer, LineLayer, TextLayer } from '@deck.gl/layers';
 import { Engine, pretty } from '../engine';
 import { Store } from '../state';
@@ -213,18 +213,16 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
 
   // We drive the view state ourselves (controlled mode) so selecting a star can
   // smoothly fly the camera to it while the controller still handles pan/zoom.
-  // We echo the controller's updates straight back; deck.gl recognises its own
-  // in-flight transition frames, so echoing them never interrupts a fly-to.
-  const flyInterpolator = new LinearInterpolator(['target', 'zoom']);
   const easeInOut = (t: number): number =>
     t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-  let viewState: Record<string, unknown> = {
+  let viewState: { target: [number, number, number]; zoom: number; minZoom: number; maxZoom: number } = {
     target: [0, 0, 0],
     zoom: 1.6,
     minZoom: -2,
     maxZoom: 8,
   };
+  let camRaf: number | null = null;
 
   const deck = new Deck({
     parent: container,
@@ -232,7 +230,14 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     viewState,
     controller: { dragRotate: false, doubleClickZoom: true },
     onViewStateChange: ({ viewState: next }) => {
-      viewState = next as Record<string, unknown>;
+      // A controller-driven change (drag, scroll, double-click) means the user is
+      // taking over, so abandon any in-flight fly-to. Programmatic updates go
+      // through setProps and never reach here, so this won't cancel our own fly.
+      if (camRaf != null) {
+        cancelAnimationFrame(camRaf);
+        camRaf = null;
+      }
+      viewState = next as typeof viewState;
       deck.setProps({ viewState });
     },
     style: { position: 'absolute', inset: '0' },
@@ -240,9 +245,37 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     layers: buildLayers(),
   });
 
-  // Glide the camera so the chosen star sits dead center, zoomed in just enough
-  // to frame its lit-up neighbors. Falls back to a fixed close-up when the
-  // neighbors are tightly packed or absent.
+  // Ease the camera from wherever it is now into (tx, ty) at zoom tz. Instead of
+  // linearly interpolating world target + zoom (which makes the view swing across
+  // the map), we pin the destination point in screen space and let it glide to
+  // center as the zoom ramps - so it reads as zooming *into* the point from the
+  // current view. Derivation: keep the point's pixel offset from center easing to
+  // zero, i.e. target(t) = S - (S - T0) * (1 - e) * 2^(z0 - z(t)).
+  function flyTo(tx: number, ty: number, tz: number): void {
+    const x0 = viewState.target[0];
+    const y0 = viewState.target[1];
+    const z0 = viewState.zoom;
+    const start = performance.now();
+    const duration = 650;
+    if (camRaf != null) cancelAnimationFrame(camRaf);
+    const tick = (now: number): void => {
+      const t = Math.min(1, (now - start) / duration);
+      const e = easeInOut(t);
+      const z = z0 + (tz - z0) * e;
+      const f = (1 - e) * Math.pow(2, z0 - z);
+      viewState = {
+        ...viewState,
+        target: [tx - (tx - x0) * f, ty - (ty - y0) * f, 0] as [number, number, number],
+        zoom: z,
+      };
+      deck.setProps({ viewState });
+      camRaf = t < 1 ? requestAnimationFrame(tick) : null;
+    };
+    camRaf = requestAnimationFrame(tick);
+  }
+
+  // Frame the chosen star dead center, zoomed in just enough to show its lit-up
+  // neighbors. Falls back to a fixed close-up when neighbors are tight or absent.
   function focusOn(index: number): void {
     const [sx, sy] = pos(index);
     let dx = 0;
@@ -262,15 +295,7 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
       zoom = Math.min(zx, zy);
     }
     zoom = Math.max(2.4, Math.min(5.5, zoom));
-    viewState = {
-      ...viewState,
-      target: [sx, sy, 0],
-      zoom,
-      transitionDuration: 700,
-      transitionInterpolator: flyInterpolator,
-      transitionEasing: easeInOut,
-    };
-    deck.setProps({ viewState });
+    flyTo(sx, sy, zoom);
   }
 
   function update(): void {
