@@ -275,26 +275,12 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
   }
 
   // Frame the chosen star dead center, zoomed in just enough to show its lit-up
-  // neighbors. Falls back to a fixed close-up when neighbors are tight or absent.
+  // neighbors. We bias toward a firm close-up rather than fitting the (often
+  // far-flung) UMAP neighbors, which previously clamped to a barely-perceptible
+  // zoom. Always zoom in relative to the current view.
   function focusOn(index: number): void {
     const [sx, sy] = pos(index);
-    let dx = 0;
-    let dy = 0;
-    for (const n of neighborList) {
-      const [nx, ny] = pos(n);
-      dx = Math.max(dx, Math.abs(nx - sx));
-      dy = Math.max(dy, Math.abs(ny - sy));
-    }
-    const pad = 0.7; // leave a margin so the constellation doesn't kiss the edges
-    const vw = container.clientWidth || 800;
-    const vh = container.clientHeight || 600;
-    let zoom = 4.2;
-    if (dx > 0 || dy > 0) {
-      const zx = Math.log2((vw * pad) / Math.max(1, 2 * dx));
-      const zy = Math.log2((vh * pad) / Math.max(1, 2 * dy));
-      zoom = Math.min(zx, zy);
-    }
-    zoom = Math.max(2.4, Math.min(5.5, zoom));
+    const zoom = Math.min(6, Math.max(4.3, viewState.zoom + 1.4));
     flyTo(sx, sy, zoom);
   }
 
