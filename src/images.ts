@@ -1,7 +1,9 @@
-// Resolves an ingredient photo on demand (nothing is predownloaded). Tries
-// TheMealDB's clean ingredient photos first, then a Wikipedia page thumbnail,
-// then gives up (the UI shows a placeholder). Results are cached in memory and
-// in localStorage so a given ingredient is only resolved once.
+// Resolves an ingredient photo. A curated manifest (public/data/images.json),
+// built by an offline audit that actually viewed every candidate photo, is
+// consulted first so results are correct and deterministic. Anything not in the
+// manifest falls back to a live lookup: TheMealDB's clean ingredient photos,
+// then a Wikipedia page thumbnail, then a placeholder. Results are cached in
+// memory and in localStorage so a given ingredient is only resolved once.
 
 export interface ImageResult {
   url: string;
@@ -12,6 +14,23 @@ export interface ImageResult {
 const LS_PREFIX = 'fg:img:v1:';
 const pending = new Map<string, Promise<ImageResult | null>>();
 const resolved = new Map<string, ImageResult | null>();
+
+let manifest: Record<string, ImageResult> | null = null;
+let manifestPromise: Promise<void> | null = null;
+function loadManifest(): Promise<void> {
+  if (!manifestPromise) {
+    manifestPromise = fetch(`${import.meta.env.BASE_URL}data/images.json`)
+      .then((r) => (r.ok ? (r.json() as Promise<Record<string, ImageResult>>) : {}))
+      .then((m) => {
+        manifest = m;
+      })
+      .catch(() => {
+        manifest = {};
+      });
+  }
+  return manifestPromise;
+}
+loadManifest();
 
 const titlecase = (s: string) =>
   s
@@ -77,6 +96,12 @@ function writeLs(name: string, value: ImageResult | null): void {
 }
 
 async function resolveUncached(name: string): Promise<ImageResult | null> {
+  await loadManifest();
+  const curated = manifest?.[name];
+  if (curated) {
+    resolved.set(name, curated);
+    return curated;
+  }
   const cached = readLs(name);
   if (cached !== undefined) {
     resolved.set(name, cached);
@@ -99,6 +124,8 @@ export function resolveImage(name: string): Promise<ImageResult | null> {
 
 // Synchronous peek for instant hover display. Returns undefined if not yet known.
 export function peekImage(name: string): ImageResult | null | undefined {
+  const curated = manifest?.[name];
+  if (curated) return curated;
   if (resolved.has(name)) return resolved.get(name);
   return readLs(name);
 }

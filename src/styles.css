@@ -562,6 +562,10 @@ body {
   pointer-events: none;
 }
 
+.hover-card[hidden] {
+  display: none;
+}
+
 .hover-thumb {
   position: relative;
   flex: 0 0 auto;
