@@ -2,9 +2,10 @@
 // neighbor list. This is the analytical core; the galaxy is its visual twin.
 
 import { Engine, pretty } from '../engine';
-import { Store } from '../state';
+import { Store, pickIngredient, pickRecipe } from '../state';
 import { MODEL_META, SPECTRUM_ENDS, familyHex } from '../config';
 import { resolveImage } from '../images';
+import { searchRecipes, type RecipeHit } from '../recipes';
 
 function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -43,7 +44,11 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
   }
   spectrum.append(ends, stops);
 
-  // --- Search ---
+  // --- Search (two modes sharing one input: ingredients are matched locally and
+  // synchronously; recipes are fetched from the API, async, debounced) ---
+  type SearchMode = 'ingredient' | 'recipe';
+  let mode: SearchMode = 'ingredient';
+
   const input = h('input', {
     class: 'search-input',
     type: 'text',
@@ -52,7 +57,31 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
     spellcheck: 'false',
   }) as HTMLInputElement;
   const results = h('ul', { class: 'search-results', hidden: 'true' });
-  const search = h('div', { class: 'search' }, [input, results]);
+
+  const modeButtons = new Map<SearchMode, HTMLButtonElement>();
+  const modeToggle = h('div', { class: 'search-modes', role: 'tablist' });
+  for (const m of [
+    { id: 'ingredient' as const, label: 'Ingredients' },
+    { id: 'recipe' as const, label: 'Recipes' },
+  ]) {
+    const btn = h('button', { class: 'search-mode', type: 'button' }, [m.label]) as HTMLButtonElement;
+    btn.addEventListener('click', () => setMode(m.id));
+    modeButtons.set(m.id, btn);
+    modeToggle.append(btn);
+  }
+
+  const search = h('div', { class: 'search' }, [modeToggle, input, results]);
+
+  function setMode(next: SearchMode): void {
+    if (next === mode) return;
+    mode = next;
+    for (const [id, btn] of modeButtons) btn.classList.toggle('active', id === mode);
+    input.placeholder =
+      mode === 'ingredient' ? 'Search 1,790 ingredients…' : 'Search recipes…';
+    input.value = '';
+    closeResults();
+    input.focus();
+  }
 
   function closeResults(): void {
     results.replaceChildren();
@@ -84,7 +113,7 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
           e.preventDefault();
           input.value = pretty(names[idx]);
           closeResults();
-          store.set({ selected: idx });
+          pickIngredient(store, idx);
         });
         return li;
       }),
@@ -92,9 +121,62 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
     results.removeAttribute('hidden');
   }
 
-  input.addEventListener('input', () => renderResults(input.value));
+  // --- Recipe search (async/remote) ---
+  let debTimer: number | null = null;
+  let inFlight: AbortController | null = null;
+  let seq = 0;
+
+  function showResultMessage(cls: string, text: string): void {
+    results.replaceChildren(h('li', { class: cls }, [text]));
+    results.removeAttribute('hidden');
+  }
+
+  function scheduleRecipeSearch(raw: string): void {
+    const q = raw.trim();
+    if (debTimer) clearTimeout(debTimer);
+    if (!q) return closeResults();
+    debTimer = window.setTimeout(() => runRecipeSearch(q), 220);
+  }
+
+  async function runRecipeSearch(q: string): Promise<void> {
+    inFlight?.abort();
+    inFlight = new AbortController();
+    const my = ++seq;
+    showResultMessage('search-empty', 'searching…');
+    try {
+      const hits = await searchRecipes(q, inFlight.signal);
+      if (my !== seq) return; // a newer query superseded this one
+      renderRecipeResults(hits);
+    } catch (err) {
+      if ((err as Error).name === 'AbortError' || my !== seq) return;
+      showResultMessage('search-empty', 'search unavailable');
+    }
+  }
+
+  function renderRecipeResults(hits: RecipeHit[]): void {
+    if (!hits.length) return showResultMessage('search-empty', 'no recipes found');
+    results.replaceChildren(
+      ...hits.map((hit) => {
+        const li = h('li', { class: 'search-result' }, [hit.title]);
+        li.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const nodes = hit.nodeIndices.filter((i) => i >= 0 && i < engine.count);
+          input.value = hit.title;
+          closeResults();
+          pickRecipe(store, { id: hit.id, title: hit.title, nodeIndices: nodes });
+        });
+        return li;
+      }),
+    );
+    results.removeAttribute('hidden');
+  }
+
+  input.addEventListener('input', () => {
+    if (mode === 'ingredient') renderResults(input.value);
+    else scheduleRecipeSearch(input.value);
+  });
   input.addEventListener('focus', () => {
-    if (input.value) renderResults(input.value);
+    if (input.value && mode === 'ingredient') renderResults(input.value);
   });
   input.addEventListener('blur', () => setTimeout(closeResults, 120));
   input.addEventListener('keydown', (e) => {
@@ -181,7 +263,7 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
       ]);
       row.addEventListener('click', () => {
         input.value = pretty(nb.name);
-        store.set({ selected: nb.index });
+        pickIngredient(store, nb.index);
       });
       row.addEventListener('mouseenter', () => store.set({ hovered: nb.index }));
       row.addEventListener('mouseleave', () => store.set({ hovered: null }));
@@ -192,6 +274,44 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
       h('strong', {}, [MODEL_META.find((m) => m.id === model)?.short ?? model]),
     ]);
     detail.replaceChildren(head, heading, list);
+  }
+
+  // When a recipe is selected, the panel lists its mapped ingredient stars.
+  // Clicking one drills into that single ingredient (clearing the recipe).
+  function renderRecipeDetail(): void {
+    const rec = store.get().selectedRecipe;
+    if (!rec) return;
+    const head = h('div', { class: 'detail-head' }, [
+      h('div', { class: 'detail-head-text' }, [
+        h('h2', { class: 'detail-name' }, [rec.title]),
+        h('span', { class: 'recipe-count' }, [
+          `${rec.nodeIndices.length} ingredient${rec.nodeIndices.length === 1 ? '' : 's'} on the map`,
+        ]),
+      ]),
+    ]);
+    const list = h('ol', { class: 'neighbors' });
+    for (const idx of rec.nodeIndices) {
+      const row = h('li', { class: 'neighbor', 'data-index': String(idx) }, [
+        h('span', { class: 'nb-name' }, [pretty(engine.name(idx))]),
+      ]);
+      row.addEventListener('click', () => {
+        input.value = pretty(engine.name(idx));
+        pickIngredient(store, idx);
+      });
+      row.addEventListener('mouseenter', () => store.set({ hovered: idx }));
+      row.addEventListener('mouseleave', () => store.set({ hovered: null }));
+      list.append(row);
+    }
+    const heading = h('div', { class: 'neighbors-heading' }, [
+      h('span', {}, ['Ingredients in this recipe']),
+    ]);
+    detail.replaceChildren(head, heading, list);
+  }
+
+  // Route the detail panel between the recipe and single-ingredient views.
+  function renderPanel(): void {
+    if (store.get().selectedRecipe) renderRecipeDetail();
+    else renderDetail();
   }
 
   function syncModel(): void {
@@ -207,17 +327,21 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
       spectrum,
     ]),
     h('div', { class: 'spine-section' }, [
-      h('label', { class: 'section-label' }, ['Ingredient']),
+      h('label', { class: 'section-label' }, ['Search']),
       search,
     ]),
     detail,
   );
 
+  for (const [id, btn] of modeButtons) btn.classList.toggle('active', id === mode);
+
   store.subscribe((_, changed) => {
     if (changed.has('model')) syncModel();
-    if (changed.has('selected') || changed.has('model')) renderDetail();
+    if (changed.has('selected') || changed.has('model') || changed.has('selectedRecipe')) {
+      renderPanel();
+    }
   });
 
   syncModel();
-  renderDetail();
+  renderPanel();
 }

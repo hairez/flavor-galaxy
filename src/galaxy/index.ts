@@ -6,7 +6,7 @@
 import { Deck, OrthographicView } from '@deck.gl/core';
 import { ScatterplotLayer, LineLayer, TextLayer } from '@deck.gl/layers';
 import { Engine, pretty } from '../engine';
-import { Store } from '../state';
+import { Store, pickIngredient } from '../state';
 import { familyRgb } from '../config';
 import { resolveImage, peekImage } from '../images';
 
@@ -25,12 +25,17 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
   let raf: number | null = null;
   let neighborSet = new Set<number>();
   let neighborList: number[] = [];
+  // A recipe selection lights up this whole set at once (its constellation).
+  let recipeSet = new Set<number>();
+  let recipeList: number[] = [];
 
   const pos = (i: number): [number, number] => [coords[i * 2], coords[i * 2 + 1]];
 
   function recomputeNeighbors(): void {
-    const { selected, model, neighborK } = store.get();
-    if (selected == null) {
+    const { selected, model, neighborK, selectedRecipe } = store.get();
+    // A recipe selection owns the highlight; suppress single-ingredient neighbors
+    // so a stale `selected` can't bleed a neighbor fan into the constellation.
+    if (selected == null || selectedRecipe != null) {
       neighborSet = new Set();
       neighborList = [];
       return;
@@ -39,11 +44,18 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     neighborSet = new Set(neighborList);
   }
 
+  function recomputeRecipe(): void {
+    const { selectedRecipe } = store.get();
+    recipeList = selectedRecipe ? selectedRecipe.nodeIndices : [];
+    recipeSet = new Set(recipeList);
+  }
+
   function fillColor(i: number): RGBA {
-    const { selected, hovered, colorBy } = store.get();
+    const { selected, hovered, colorBy, selectedRecipe } = store.get();
     const li = engine.labelIndex(colorBy, i);
     const [r, g, b] = familyRgb(engine.legend(colorBy)[li], li);
     if (i === hovered) return [255, 255, 255, 255];
+    if (selectedRecipe) return recipeSet.has(i) ? [r, g, b, 255] : [r, g, b, DIM_ALPHA];
     if (selected == null) return [r, g, b, BASE_ALPHA];
     if (i === selected) return [r, g, b, 255];
     if (neighborSet.has(i)) return [r, g, b, 255];
@@ -52,8 +64,9 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
 
   // Radii are in screen pixels so points stay crisp and constant-size at any zoom.
   function radius(i: number): number {
-    const { selected, hovered } = store.get();
+    const { selected, hovered, selectedRecipe } = store.get();
     if (i === hovered) return 6;
+    if (selectedRecipe) return recipeSet.has(i) ? 4.5 : 2;
     if (i === selected) return 7;
     if (selected != null && neighborSet.has(i)) return 4.5;
     return selected == null ? 2.6 : 2;
@@ -138,9 +151,25 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     }
   }
 
+  // Center of mass of the recipe's stars; the constellation edges fan out from
+  // here. Reads the same tweened `coords` as the points, so it glides in lockstep.
+  function recipeCentroid(): [number, number] {
+    if (!recipeList.length) return [0, 0];
+    let sx = 0;
+    let sy = 0;
+    for (const i of recipeList) {
+      const [x, y] = pos(i);
+      sx += x;
+      sy += y;
+    }
+    return [sx / recipeList.length, sy / recipeList.length];
+  }
+
   function buildLayers() {
-    const { selected, model, colorBy, hovered } = store.get();
-    const trigger = `${colorBy}|${selected}|${hovered}|${model}`;
+    const { selected, model, colorBy, hovered, selectedRecipe } = store.get();
+    const recipeKey = selectedRecipe ? selectedRecipe.id : '∅';
+    const trigger = `${colorBy}|${selected}|${hovered}|${model}|${recipeKey}`;
+    const showSelection = selected != null && selectedRecipe == null;
 
     const scatter = new ScatterplotLayer<number>({
       id: 'points',
@@ -152,8 +181,8 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
       antialiasing: true,
       stroked: true,
       getLineColor: (i: number) =>
-        i === selected ? [255, 255, 255, 255] : [255, 255, 255, 0],
-      getLineWidth: (i: number) => (i === selected ? 1.5 : 0),
+        showSelection && i === selected ? [255, 255, 255, 255] : [255, 255, 255, 0],
+      getLineWidth: (i: number) => (showSelection && i === selected ? 1.5 : 0),
       lineWidthUnits: 'pixels',
       pickable: true,
       autoHighlight: false,
@@ -164,19 +193,19 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
         else showCard(idx, info.x, info.y);
       },
       onClick: (info) => {
-        if (info.index >= 0) store.set({ selected: info.index });
+        if (info.index >= 0) pickIngredient(store, info.index);
       },
       updateTriggers: {
         getPosition: frame,
         getFillColor: trigger,
         getRadius: trigger,
-        getLineColor: selected,
-        getLineWidth: selected,
+        getLineColor: trigger,
+        getLineWidth: trigger,
       },
     });
 
     const links =
-      selected != null
+      showSelection
         ? new LineLayer<number>({
             id: 'links',
             data: neighborList,
@@ -187,6 +216,20 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
             updateTriggers: { getSourcePosition: `${selected}|${frame}`, getTargetPosition: frame },
           })
         : null;
+
+    // The recipe constellation: accent-orange edges from the centroid to each
+    // ingredient star, distinct from the white neighbor fan.
+    const recipeLinks = selectedRecipe
+      ? new LineLayer<number>({
+          id: 'recipe-links',
+          data: recipeList,
+          getSourcePosition: () => recipeCentroid(),
+          getTargetPosition: (i: number) => pos(i),
+          getColor: [255, 180, 84, 150],
+          getWidth: 1.2,
+          updateTriggers: { getSourcePosition: `${recipeKey}|${frame}`, getTargetPosition: frame },
+        })
+      : null;
 
     const labels = new TextLayer<number>({
       id: 'labels',
@@ -208,7 +251,7 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
       updateTriggers: { getPosition: frame, getSize: selected },
     });
 
-    return [scatter, links, labels].filter(Boolean);
+    return [scatter, links, recipeLinks, labels].filter(Boolean);
   }
 
   // We drive the view state ourselves (controlled mode) so selecting a star can
@@ -284,6 +327,34 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     flyTo(sx, sy, zoom);
   }
 
+  // Frame a whole set of stars (a recipe's constellation): center on their
+  // bounding box and pick a zoom that fits it into ~80% of the viewport.
+  function focusOnSet(indices: number[]): void {
+    if (!indices.length) return;
+    if (indices.length === 1) return focusOn(indices[0]);
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const i of indices) {
+      const [x, y] = pos(i);
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const spanX = Math.max(maxX - minX, 1e-3);
+    const spanY = Math.max(maxY - minY, 1e-3);
+    // Orthographic deck.gl: world units per pixel = 1 / 2^zoom.
+    const vw = container.clientWidth * 0.8;
+    const vh = container.clientHeight * 0.8;
+    const zoom = Math.log2(Math.min(vw / spanX, vh / spanY));
+    const clamped = Math.max(viewState.minZoom, Math.min(6, zoom));
+    flyTo(cx, cy, clamped);
+  }
+
   function update(): void {
     deck.setProps({ layers: buildLayers() });
   }
@@ -309,7 +380,14 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
   }
 
   store.subscribe((_, changed) => {
-    if (changed.has('selected') || changed.has('model')) recomputeNeighbors();
+    if (changed.has('selected') || changed.has('model') || changed.has('selectedRecipe')) {
+      recomputeNeighbors();
+    }
+    if (changed.has('selectedRecipe')) {
+      recomputeRecipe();
+      const { selectedRecipe } = store.get();
+      if (selectedRecipe) focusOnSet(selectedRecipe.nodeIndices);
+    }
     if (changed.has('selected')) {
       const { selected } = store.get();
       if (selected != null) focusOn(selected);
@@ -319,5 +397,6 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
   });
 
   recomputeNeighbors();
+  recomputeRecipe();
   update();
 }

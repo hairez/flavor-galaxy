@@ -1,0 +1,8 @@
+node_modules/
+dist/
+# Generated artifacts. The seed corpus is rebuilt from data/seed-recipes.json via
+# `npm run seed`; the full pipeline artifact is large and lives in object storage.
+data/recipes.ndjson
+data/recipes.parquet
+data/recipes.sqlite
+.meili/

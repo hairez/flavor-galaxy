@@ -121,6 +121,7 @@ async function main(): Promise<void> {
     selected: null,
     hovered: null,
     neighborK: 8,
+    selectedRecipe: null,
   });
 
   const { galaxyRoot, spineRoot } = buildChrome(engine);

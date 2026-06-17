@@ -1,0 +1,32 @@
+{
+  "_comment": "Hand-built ingredient aliases: normalized source term -> canonical snake_case name in public/data/meta.json `names`. Targets are validated at load; an alias pointing at a non-canonical name is ignored with a warning. Human overrides here win over every automatic mapping stage. Grow this from mapping_report.json's top unmatched terms.",
+  "aliases": {
+    "green_onion": "scallion",
+    "spring_onion": "scallion",
+    "spring_onions": "scallion",
+    "cilantro": "coriander",
+    "fresh_cilantro": "coriander",
+    "coriander_leaf": "coriander",
+    "coriander_leaves": "coriander",
+    "aubergine": "eggplant",
+    "courgette": "zucchini",
+    "courgettes": "zucchini",
+    "prawn": "shrimp",
+    "prawns": "shrimp",
+    "capsicum": "bell_pepper",
+    "rocket": "arugula",
+    "yoghurt": "yogurt",
+    "parmesan": "parmesan_cheese",
+    "parmigiano": "parmesan_cheese",
+    "parmigiano_reggiano": "parmesan_cheese",
+    "mozzarella": "mozzarella_cheese",
+    "cheddar": "cheddar_cheese",
+    "feta": "feta_cheese",
+    "all_purpose_flour": "flour",
+    "plain_flour": "flour",
+    "minced_garlic": "garlic",
+    "garlic_clove": "garlic",
+    "garlic_cloves": "garlic",
+    "scallions": "scallion"
+  }
+}

@@ -4,12 +4,23 @@
 export type ModelId = string;
 export type ColorDim = string;
 
+// A recipe selection lights up a *set* of ingredient stars at once (its
+// constellation). It is mutually exclusive with the single-ingredient
+// `selected`; the pick* helpers below enforce that so the two highlight modes
+// never fight over the render.
+export interface RecipeSelection {
+  id: string;
+  title: string;
+  nodeIndices: number[];
+}
+
 export interface AppState {
   model: ModelId;
   colorBy: ColorDim;
   selected: number | null; // ingredient index
   hovered: number | null;
   neighborK: number;
+  selectedRecipe: RecipeSelection | null;
 }
 
 type Listener = (state: AppState, changed: Set<keyof AppState>) => void;
@@ -40,4 +51,15 @@ export class Store {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
+}
+
+// Selecting an ingredient and selecting a recipe are mutually exclusive. These
+// helpers always clear the counterpart so no call site can leave both set (which
+// would draw a recipe constellation with a phantom single-ingredient ring).
+export function pickIngredient(store: Store, index: number): void {
+  store.set({ selected: index, selectedRecipe: null });
+}
+
+export function pickRecipe(store: Store, recipe: RecipeSelection): void {
+  store.set({ selectedRecipe: recipe, selected: null, hovered: null });
 }
