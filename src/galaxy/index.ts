@@ -327,8 +327,36 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     flyTo(sx, sy, zoom);
   }
 
+  // Straight-line camera ease (target and zoom interpolated directly). Unlike
+  // flyTo, this works for zooming *out* too, so every intermediate frame stays
+  // between the start and end view instead of swinging off-screen - which is
+  // essential when fitting a spread-out recipe constellation.
+  function flyToFit(tx: number, ty: number, tz: number): void {
+    const x0 = viewState.target[0];
+    const y0 = viewState.target[1];
+    const z0 = viewState.zoom;
+    const start = performance.now();
+    const duration = 650;
+    if (camRaf != null) cancelAnimationFrame(camRaf);
+    const tick = (now: number): void => {
+      const t = Math.min(1, (now - start) / duration);
+      const e = easeInOut(t);
+      viewState = {
+        ...viewState,
+        target: [x0 + (tx - x0) * e, y0 + (ty - y0) * e, 0] as [number, number, number],
+        zoom: z0 + (tz - z0) * e,
+      };
+      deck.setProps({ viewState });
+      camRaf = t < 1 ? requestAnimationFrame(tick) : null;
+    };
+    camRaf = requestAnimationFrame(tick);
+  }
+
   // Frame a whole set of stars (a recipe's constellation): center on their
-  // bounding box and pick a zoom that fits it into ~80% of the viewport.
+  // bounding box and pick a zoom that fits it into the viewport, leaving room
+  // for the side panel that overlays the left edge of the canvas.
+  const PANEL_PX = 360; // approximate width of the spine overlay
+
   function focusOnSet(indices: number[]): void {
     if (!indices.length) return;
     if (indices.length === 1) return focusOn(indices[0]);
@@ -347,12 +375,19 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     const cy = (minY + maxY) / 2;
     const spanX = Math.max(maxX - minX, 1e-3);
     const spanY = Math.max(maxY - minY, 1e-3);
-    // Orthographic deck.gl: world units per pixel = 1 / 2^zoom.
-    const vw = container.clientWidth * 0.8;
-    const vh = container.clientHeight * 0.8;
-    const zoom = Math.log2(Math.min(vw / spanX, vh / spanY));
-    const clamped = Math.max(viewState.minZoom, Math.min(6, zoom));
-    flyTo(cx, cy, clamped);
+    // Orthographic deck.gl: world units per pixel = 1 / 2^zoom. Fit the span into
+    // the canvas area not covered by the panel, with margin.
+    const usableW = Math.max(120, container.clientWidth - PANEL_PX) * 0.82;
+    const usableH = container.clientHeight * 0.82;
+    const rawZoom = Math.log2(Math.min(usableW / spanX, usableH / spanY));
+    // Clamp so a far-flung constellation never shrinks the map to nothing and a
+    // tight one never slams to max zoom.
+    const zoom = Math.max(1.2, Math.min(5.5, rawZoom));
+    // Shift the world target left so the centroid sits in the visible area to
+    // the right of the panel rather than under it.
+    const worldPerPx = 1 / Math.pow(2, zoom);
+    const tx = cx - (PANEL_PX / 2) * worldPerPx;
+    flyToFit(tx, cy, zoom);
   }
 
   function update(): void {
