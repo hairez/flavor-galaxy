@@ -13,6 +13,10 @@ export interface RecipeDoc {
   unmapped?: string[];
 }
 
+// The reduced shape returned by search: only the fields needed to light up the
+// constellation. It is a strict subset of RecipeDoc (no ingredients_text /
+// unmapped), so search payloads stay small and no consumer can read a field the
+// projection never retrieved.
 export interface SearchHit {
   id: string;
   title: string;
@@ -30,7 +34,9 @@ export interface SearchResponse {
   hits: SearchHit[];
 }
 
-export function toHit(doc: RecipeDoc): SearchHit {
+// Accepts any value carrying the SearchHit fields (a full RecipeDoc qualifies),
+// so it works for both the in-memory full doc and the Meili search projection.
+export function toHit(doc: SearchHit): SearchHit {
   return {
     id: doc.id,
     title: doc.title,

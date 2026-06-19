@@ -10,6 +10,8 @@ import {
   normalizeTerm,
   stripPrepAdjectives,
   singularizeToken,
+  singularCandidates,
+  headNounCandidates,
   withinEditDistance1,
   createMapper,
 } from './normalize.mjs';
@@ -27,6 +29,14 @@ test('normalizeTerm: accents, case, spaces, punctuation', () => {
   assert.equal(normalizeTerm('1 cup, flour!'), '1_cup_flour');
 });
 
+test('normalizeTerm: falsy input and separator collapse', () => {
+  assert.equal(normalizeTerm(''), '');
+  assert.equal(normalizeTerm(null), '');
+  assert.equal(normalizeTerm(undefined), '');
+  assert.equal(normalizeTerm('extra-virgin olive-oil'), 'extra_virgin_olive_oil');
+  assert.equal(normalizeTerm('flour___sugar'), 'flour_sugar');
+});
+
 test('stripPrepAdjectives drops leading prep words only', () => {
   assert.equal(stripPrepAdjectives('fresh_basil'), 'basil');
   assert.equal(stripPrepAdjectives('finely_chopped_onion'), 'onion');
@@ -40,11 +50,36 @@ test('singularizeToken common rules', () => {
   assert.equal(singularizeToken('leaves'), 'leaf');
 });
 
-test('withinEditDistance1', () => {
+test('singularizeToken: -sses/-shes/-ches, the -ss guard, and no-rule fall-through', () => {
+  assert.equal(singularizeToken('glasses'), 'glass'); // -sses
+  assert.equal(singularizeToken('dishes'), 'dish'); // -shes
+  assert.equal(singularizeToken('peaches'), 'peach'); // -ches
+  assert.equal(singularizeToken('watercress'), 'watercress'); // -ss guard: must NOT strip
+  assert.equal(singularizeToken('bus'), 'bus'); // length <= 3 short-circuit
+  assert.equal(singularizeToken('oil'), 'oil'); // no suffix rule applies
+});
+
+test('withinEditDistance1: substitution, transposition, and rejections', () => {
   assert.ok(withinEditDistance1('brocoli', 'broccoli')); // insertion
   assert.ok(withinEditDistance1('tomatoe', 'tomato')); // deletion
-  assert.ok(withinEditDistance1('yohgurt', 'yohgurt')); // identical
+  assert.ok(withinEditDistance1('cat', 'cat')); // identical (a === b fast path)
+  assert.ok(withinEditDistance1('cat', 'cap')); // single substitution (equal length)
+  assert.ok(withinEditDistance1('form', 'from')); // adjacent transposition
+  assert.ok(!withinEditDistance1('abcd', 'badc')); // two non-adjacent swaps
+  assert.ok(!withinEditDistance1('cat', 'dog')); // too many diffs
   assert.ok(!withinEditDistance1('red_wine', 'white_wine'));
+});
+
+test('singularCandidates excludes the original and singularizes whole + head', () => {
+  // whole-key and head-token singularization both yield green_onion; the input
+  // itself is excluded so the cascade only tests genuinely new candidates.
+  assert.deepEqual(singularCandidates('green_onions'), ['green_onion']);
+  assert.deepEqual(singularCandidates('eggs'), ['egg']);
+});
+
+test('headNounCandidates yields trailing sub-phrases longest-first', () => {
+  assert.deepEqual(headNounCandidates('smoked_streaky_bacon'), ['streaky_bacon', 'bacon']);
+  assert.deepEqual(headNounCandidates('bacon'), []);
 });
 
 test('exact match', () => {
@@ -78,13 +113,68 @@ test('inherently-plural canonicals survive (exact wins before singularize)', () 
   if (meta.names.includes('baked_beans')) assert.equal(map('baked beans'), 'baked_beans');
 });
 
+test('head_noun stage resolves a multi-word term to its trailing canonical', () => {
+  // 'smoked'/'streaky' aren't prep words, so this only resolves via the head-noun
+  // stage (stage 5), distinct from exact/alias/plural. Asserting `via` pins that.
+  const m = createMapper(['bacon'], {});
+  const r = m.mapTerm('smoked streaky bacon');
+  assert.equal(r.name, 'bacon');
+  assert.equal(r.via, 'head_noun');
+});
+
+test('fuzzy stage corrects a typo within edit distance 1', () => {
+  const m = createMapper(['broccoli'], {});
+  const r = m.mapTerm('brocoli');
+  assert.equal(r.name, 'broccoli');
+  assert.equal(r.via, 'fuzzy');
+});
+
+test('fuzzy gating: length < 5 and first-letter typos do not fuzzy-match', () => {
+  const m = createMapper(['broccoli'], {});
+  assert.equal(m.mapTerm('eg').via, 'unmatched'); // too short to fuzzy
+  assert.equal(m.mapTerm('vroccoli').via, 'unmatched'); // first-letter bucket misses
+});
+
+test('alias resolves after singularization (stage 4 alias path)', () => {
+  // The alias key is singular only; a plural input must singularize first, then
+  // hit the alias - exercising the alias branch inside the singular/plural stage.
+  const m = createMapper(['scallion'], { spring_onion: 'scallion' });
+  const r = m.mapTerm('spring onions');
+  assert.equal(r.name, 'scallion');
+  assert.equal(r.via, 'alias');
+});
+
 test('unmatched returns null', () => {
   assert.equal(map('unicorn tears'), null);
   assert.equal(mapper.mapTerm('xyzzy123').via, 'unmatched');
 });
 
+test('empty / unnormalizable terms map via "empty" and are excluded from unmapped', () => {
+  assert.equal(mapper.mapTerm('').via, 'empty');
+  assert.equal(mapper.mapTerm('!!!').via, 'empty');
+  // mapRecipe drops empty terms but still records a genuine miss.
+  const { unmapped } = mapper.mapRecipe(['', '!!!', 'unicorn tears']);
+  assert.deepEqual(unmapped, ['unicorn tears']);
+});
+
+test('mapRecipe.mappedCount counts mapped terms before dedup', () => {
+  // Two distinct terms resolving to the same node count twice toward coverage but
+  // collapse to one node index.
+  const m = createMapper(['parmesan_cheese'], { parmesan: 'parmesan_cheese' });
+  const { nodeIndices, mappedCount } = m.mapRecipe(['parmesan', 'parmesan cheese']);
+  assert.deepEqual(nodeIndices, [0]);
+  assert.equal(mappedCount, 2);
+});
+
 test('alias table has no invalid targets', () => {
   assert.deepEqual(mapper.invalidAliases, []);
+});
+
+test('invalid aliases are recorded and dropped from the live mapping', () => {
+  const m = createMapper(['scallion'], { good: 'scallion', bad: 'nonexistent' });
+  assert.deepEqual(m.invalidAliases, [{ alias: 'bad', target: 'nonexistent' }]);
+  assert.equal(m.mapTerm('good').name, 'scallion'); // valid alias still works
+  assert.equal(m.mapTerm('bad').via, 'unmatched'); // invalid alias was not applied
 });
 
 test('mapRecipe dedupes and sorts node indices', () => {

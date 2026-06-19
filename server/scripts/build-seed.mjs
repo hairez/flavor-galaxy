@@ -29,9 +29,9 @@ let totalIngredients = 0;
 let totalMapped = 0;
 
 seed.recipes.forEach((r, i) => {
-  const { nodeIndices, unmapped } = mapper.mapRecipe(r.ingredients);
+  const { nodeIndices, unmapped, mappedCount } = mapper.mapRecipe(r.ingredients);
   totalIngredients += r.ingredients.length;
-  totalMapped += nodeIndices.length;
+  totalMapped += mappedCount;
   for (const u of unmapped) unmappedFreq.set(u, (unmappedFreq.get(u) ?? 0) + 1);
   if (nodeIndices.length === 0) return; // drop recipes that light up nothing
   docs.push({
@@ -40,10 +40,12 @@ seed.recipes.forEach((r, i) => {
     ingredients_text: r.ingredients.join(', '),
     nodes: nodeIndices,
     node_count: nodeIndices.length,
+    // Fraction of the recipe's ingredients that mapped to a node (counts mapped
+    // terms, not distinct nodes, so shared-node ingredients aren't undercounted).
     coverage:
       r.ingredients.length === 0
         ? 0
-        : Math.round((nodeIndices.length / r.ingredients.length) * 1000) / 1000,
+        : Math.round((mappedCount / r.ingredients.length) * 1000) / 1000,
     unmapped,
   });
 });

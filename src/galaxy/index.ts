@@ -23,6 +23,10 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
   let coords = Float32Array.from(engine.layout(store.get().model));
   let frame = 0; // bumped each animation tick to force deck.gl to re-read positions
   let raf: number | null = null;
+  // While a model tween runs, points are still gliding toward this layout; a
+  // one-shot camera fit uses it (not the mid-flight `coords`) so the camera and
+  // the points converge on the same final frame. Null when no tween is active.
+  let pendingTo: ArrayLike<number> | null = null;
   let neighborSet = new Set<number>();
   let neighborList: number[] = [];
   // A recipe selection lights up this whole set at once (its constellation).
@@ -30,6 +34,11 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
   let recipeList: number[] = [];
 
   const pos = (i: number): [number, number] => [coords[i * 2], coords[i * 2 + 1]];
+  // Position to fit the camera to: the tween's destination if one is in flight,
+  // else the live position. Rendering layers track the live `coords`; only the
+  // one-shot fit needs to look ahead to where the points are landing.
+  const fitPos = (i: number): [number, number] =>
+    pendingTo ? [pendingTo[i * 2], pendingTo[i * 2 + 1]] : pos(i);
 
   function recomputeNeighbors(): void {
     const { selected, model, neighborK, selectedRecipe } = store.get();
@@ -55,7 +64,11 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     const li = engine.labelIndex(colorBy, i);
     const [r, g, b] = familyRgb(engine.legend(colorBy)[li], li);
     if (i === hovered) return [255, 255, 255, 255];
-    if (selectedRecipe) return recipeSet.has(i) ? [r, g, b, 255] : [r, g, b, DIM_ALPHA];
+    // Only dim toward the constellation when it actually has stars on the map; an
+    // empty recipeSet would otherwise dim every point into a dead, unframed galaxy.
+    if (selectedRecipe && recipeSet.size > 0) {
+      return recipeSet.has(i) ? [r, g, b, 255] : [r, g, b, DIM_ALPHA];
+    }
     if (selected == null) return [r, g, b, BASE_ALPHA];
     if (i === selected) return [r, g, b, 255];
     if (neighborSet.has(i)) return [r, g, b, 255];
@@ -66,7 +79,7 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
   function radius(i: number): number {
     const { selected, hovered, selectedRecipe } = store.get();
     if (i === hovered) return 6;
-    if (selectedRecipe) return recipeSet.has(i) ? 4.5 : 2;
+    if (selectedRecipe && recipeSet.size > 0) return recipeSet.has(i) ? 4.5 : 2;
     if (i === selected) return 7;
     if (selected != null && neighborSet.has(i)) return 4.5;
     return selected == null ? 2.6 : 2;
@@ -288,6 +301,25 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     layers: buildLayers(),
   });
 
+  // Shared camera tween: owns the start time, in-flight cancellation, the rAF
+  // loop, and committing viewState. Callers supply only the per-frame view for an
+  // eased progress e in [0,1] - the one thing flyTo and flyToFit actually differ in.
+  function runCamTween(
+    frameAt: (e: number) => { target: [number, number, number]; zoom: number },
+    duration = 650,
+  ): void {
+    const start = performance.now();
+    if (camRaf != null) cancelAnimationFrame(camRaf);
+    const tick = (now: number): void => {
+      const t = Math.min(1, (now - start) / duration);
+      const { target, zoom } = frameAt(easeInOut(t));
+      viewState = { ...viewState, target, zoom };
+      deck.setProps({ viewState });
+      camRaf = t < 1 ? requestAnimationFrame(tick) : null;
+    };
+    camRaf = requestAnimationFrame(tick);
+  }
+
   // Ease the camera from wherever it is now into (tx, ty) at zoom tz. Instead of
   // linearly interpolating world target + zoom (which makes the view swing across
   // the map), we pin the destination point in screen space and let it glide to
@@ -298,23 +330,11 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     const x0 = viewState.target[0];
     const y0 = viewState.target[1];
     const z0 = viewState.zoom;
-    const start = performance.now();
-    const duration = 650;
-    if (camRaf != null) cancelAnimationFrame(camRaf);
-    const tick = (now: number): void => {
-      const t = Math.min(1, (now - start) / duration);
-      const e = easeInOut(t);
+    runCamTween((e) => {
       const z = z0 + (tz - z0) * e;
       const f = (1 - e) * Math.pow(2, z0 - z);
-      viewState = {
-        ...viewState,
-        target: [tx - (tx - x0) * f, ty - (ty - y0) * f, 0] as [number, number, number],
-        zoom: z,
-      };
-      deck.setProps({ viewState });
-      camRaf = t < 1 ? requestAnimationFrame(tick) : null;
-    };
-    camRaf = requestAnimationFrame(tick);
+      return { target: [tx - (tx - x0) * f, ty - (ty - y0) * f, 0], zoom: z };
+    });
   }
 
   // Frame the chosen star dead center, zoomed in just enough to show its lit-up
@@ -322,7 +342,7 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
   // far-flung) UMAP neighbors, which previously clamped to a barely-perceptible
   // zoom. Always zoom in relative to the current view.
   function focusOn(index: number): void {
-    const [sx, sy] = pos(index);
+    const [sx, sy] = fitPos(index);
     const zoom = Math.min(6, Math.max(4.3, viewState.zoom + 1.4));
     flyTo(sx, sy, zoom);
   }
@@ -335,21 +355,10 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     const x0 = viewState.target[0];
     const y0 = viewState.target[1];
     const z0 = viewState.zoom;
-    const start = performance.now();
-    const duration = 650;
-    if (camRaf != null) cancelAnimationFrame(camRaf);
-    const tick = (now: number): void => {
-      const t = Math.min(1, (now - start) / duration);
-      const e = easeInOut(t);
-      viewState = {
-        ...viewState,
-        target: [x0 + (tx - x0) * e, y0 + (ty - y0) * e, 0] as [number, number, number],
-        zoom: z0 + (tz - z0) * e,
-      };
-      deck.setProps({ viewState });
-      camRaf = t < 1 ? requestAnimationFrame(tick) : null;
-    };
-    camRaf = requestAnimationFrame(tick);
+    runCamTween((e) => ({
+      target: [x0 + (tx - x0) * e, y0 + (ty - y0) * e, 0],
+      zoom: z0 + (tz - z0) * e,
+    }));
   }
 
   // Frame a whole set of stars (a recipe's constellation): center on their
@@ -365,7 +374,7 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
     let maxX = -Infinity;
     let maxY = -Infinity;
     for (const i of indices) {
-      const [x, y] = pos(i);
+      const [x, y] = fitPos(i);
       minX = Math.min(minX, x);
       maxX = Math.max(maxX, x);
       minY = Math.min(minY, y);
@@ -399,6 +408,7 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
   function animateTo(model: string): void {
     const from = Float32Array.from(coords);
     const to = engine.layout(model);
+    pendingTo = to; // fit the camera to where points are landing while they glide
     const start = performance.now();
     const duration = 850;
     const ease = (t: number) => t * t * (3 - 2 * t);
@@ -409,7 +419,12 @@ export function createGalaxy(container: HTMLDivElement, engine: Engine, store: S
       for (let i = 0; i < to.length; i++) coords[i] = from[i] + (to[i] - from[i]) * e;
       frame++;
       update();
-      raf = t < 1 ? requestAnimationFrame(tick) : null;
+      if (t < 1) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        raf = null;
+        pendingTo = null;
+      }
     };
     raf = requestAnimationFrame(tick);
   }

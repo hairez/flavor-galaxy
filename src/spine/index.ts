@@ -5,7 +5,7 @@ import { Engine, pretty } from '../engine';
 import { Store, pickIngredient, pickRecipe } from '../state';
 import { MODEL_META, SPECTRUM_ENDS, familyHex } from '../config';
 import { resolveImage } from '../images';
-import { searchRecipes, type RecipeHit } from '../recipes';
+import { searchRecipes, recipeSearchAvailable, type RecipeHit } from '../recipes';
 
 function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -72,14 +72,25 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
 
   const search = h('div', { class: 'search' }, [modeToggle, input, results]);
 
+  function syncModeButtons(): void {
+    for (const [id, btn] of modeButtons) btn.classList.toggle('active', id === mode);
+  }
+
   function setMode(next: SearchMode): void {
     if (next === mode) return;
     mode = next;
-    for (const [id, btn] of modeButtons) btn.classList.toggle('active', id === mode);
+    // Abandon any scheduled or in-flight recipe search so a late result can't
+    // reopen the dropdown in the wrong mode. closeResults() alone is insufficient
+    // because the debounce timer / fetch resolve later.
+    cancelRecipeSearch();
+    syncModeButtons();
     input.placeholder =
       mode === 'ingredient' ? 'Search 1,790 ingredients…' : 'Search recipes…';
     input.value = '';
     closeResults();
+    if (mode === 'recipe' && !recipeSearchAvailable) {
+      showResultMessage('search-empty', 'recipe search is unavailable');
+    }
     input.focus();
   }
 
@@ -131,9 +142,22 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
     results.removeAttribute('hidden');
   }
 
+  // Cancel a pending debounce and abort an in-flight request, and bump `seq` so a
+  // fetch that resolves after cancellation is treated as superseded.
+  function cancelRecipeSearch(): void {
+    if (debTimer) {
+      clearTimeout(debTimer);
+      debTimer = null;
+    }
+    inFlight?.abort();
+    inFlight = null;
+    seq++;
+  }
+
   function scheduleRecipeSearch(raw: string): void {
     const q = raw.trim();
     if (debTimer) clearTimeout(debTimer);
+    if (!recipeSearchAvailable) return showResultMessage('search-empty', 'recipe search is unavailable');
     if (!q) return closeResults();
     debTimer = window.setTimeout(() => runRecipeSearch(q), 220);
   }
@@ -157,10 +181,17 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
     if (!hits.length) return showResultMessage('search-empty', 'no recipes found');
     results.replaceChildren(
       ...hits.map((hit) => {
-        const li = h('li', { class: 'search-result' }, [hit.title]);
+        // A recipe whose nodes all fall outside the current map (e.g. stale data)
+        // would otherwise select an empty constellation and dim the whole galaxy.
+        const nodes = hit.nodeIndices.filter((i) => i >= 0 && i < engine.count);
+        const selectable = nodes.length > 0;
+        const li = h('li', { class: selectable ? 'search-result' : 'search-result disabled' }, [
+          hit.title,
+        ]);
+        if (!selectable) li.setAttribute('title', 'no mapped ingredients on the map');
         li.addEventListener('mousedown', (e) => {
           e.preventDefault();
-          const nodes = hit.nodeIndices.filter((i) => i >= 0 && i < engine.count);
+          if (!selectable) return;
           input.value = hit.title;
           closeResults();
           pickRecipe(store, { id: hit.id, title: hit.title, nodeIndices: nodes });
@@ -221,6 +252,22 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
     return fig;
   }
 
+  // One neighbor/ingredient row: name plus optional trailing children (the score
+  // bar), with the click-to-drill and hover wiring shared by both detail views.
+  function neighborRow(index: number, label: string, extra: Node[] = []): HTMLLIElement {
+    const row = h('li', { class: 'neighbor', 'data-index': String(index) }, [
+      h('span', { class: 'nb-name' }, [label]),
+      ...extra,
+    ]) as HTMLLIElement;
+    row.addEventListener('click', () => {
+      input.value = label;
+      pickIngredient(store, index);
+    });
+    row.addEventListener('mouseenter', () => store.set({ hovered: index }));
+    row.addEventListener('mouseleave', () => store.set({ hovered: null }));
+    return row;
+  }
+
   function renderDetail(): void {
     const { selected, model } = store.get();
     if (selected == null) {
@@ -254,20 +301,14 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
     const list = h('ol', { class: 'neighbors' });
     for (const nb of neighbors) {
       const pct = Math.max(0, Math.min(1, nb.score));
-      const row = h('li', { class: 'neighbor', 'data-index': String(nb.index) }, [
-        h('span', { class: 'nb-name' }, [pretty(nb.name)]),
-        h('span', { class: 'nb-bar' }, [
-          h('span', { class: 'nb-fill', style: `width:${(pct * 100).toFixed(1)}%` }),
+      list.append(
+        neighborRow(nb.index, pretty(nb.name), [
+          h('span', { class: 'nb-bar' }, [
+            h('span', { class: 'nb-fill', style: `width:${(pct * 100).toFixed(1)}%` }),
+          ]),
+          h('span', { class: 'nb-score' }, [nb.score.toFixed(2)]),
         ]),
-        h('span', { class: 'nb-score' }, [nb.score.toFixed(2)]),
-      ]);
-      row.addEventListener('click', () => {
-        input.value = pretty(nb.name);
-        pickIngredient(store, nb.index);
-      });
-      row.addEventListener('mouseenter', () => store.set({ hovered: nb.index }));
-      row.addEventListener('mouseleave', () => store.set({ hovered: null }));
-      list.append(row);
+      );
     }
     const heading = h('div', { class: 'neighbors-heading' }, [
       h('span', {}, ['Closest by ']),
@@ -291,16 +332,7 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
     ]);
     const list = h('ol', { class: 'neighbors' });
     for (const idx of rec.nodeIndices) {
-      const row = h('li', { class: 'neighbor', 'data-index': String(idx) }, [
-        h('span', { class: 'nb-name' }, [pretty(engine.name(idx))]),
-      ]);
-      row.addEventListener('click', () => {
-        input.value = pretty(engine.name(idx));
-        pickIngredient(store, idx);
-      });
-      row.addEventListener('mouseenter', () => store.set({ hovered: idx }));
-      row.addEventListener('mouseleave', () => store.set({ hovered: null }));
-      list.append(row);
+      list.append(neighborRow(idx, pretty(engine.name(idx))));
     }
     const heading = h('div', { class: 'neighbors-heading' }, [
       h('span', {}, ['Ingredients in this recipe']),
@@ -333,7 +365,7 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
     detail,
   );
 
-  for (const [id, btn] of modeButtons) btn.classList.toggle('active', id === mode);
+  syncModeButtons();
 
   store.subscribe((_, changed) => {
     if (changed.has('model')) syncModel();

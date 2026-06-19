@@ -296,6 +296,17 @@ body {
   background: rgba(255, 180, 84, 0.14);
 }
 
+/* A recipe whose ingredients aren't on the current map: shown but not pickable. */
+.search-result.disabled {
+  color: var(--ink-faint);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.search-result.disabled:hover {
+  background: transparent;
+}
+
 .recipe-count {
   display: inline-block;
   margin-top: 4px;

@@ -22,9 +22,10 @@ export const config = {
   // RecipeDoc per line), produced by `npm run seed` / the recipe pipeline.
   recipesFile: process.env.RECIPES_FILE ?? join(serverRoot, 'data', 'recipes.ndjson'),
 
-  // CORS allowlist: the static Pages origin plus local Vite dev servers.
+  // CORS allowlist: the static GitHub Pages origin plus local Vite dev servers.
+  // Override with ALLOWED_ORIGINS (comma-separated) for any other deployment.
   allowedOrigins: (process.env.ALLOWED_ORIGINS ??
-    'http://localhost:5173,http://127.0.0.1:5173')
+    'https://hairez.github.io,http://localhost:5173,http://127.0.0.1:5173')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),

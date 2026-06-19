@@ -25,7 +25,10 @@ const docs = readFileSync(config.recipesFile, 'utf8')
 
 await index.updateSettings({
   searchableAttributes: ['title', 'ingredients_text'],
-  displayedAttributes: ['id', 'title', 'nodes', 'node_count', 'coverage'],
+  // Display the full RecipeDoc so GET /api/recipes/:id returns the same shape as
+  // the in-memory backend. Search still trims to the light-up fields via the
+  // query's attributesToRetrieve, so search payloads stay small.
+  displayedAttributes: ['id', 'title', 'ingredients_text', 'nodes', 'node_count', 'coverage', 'unmapped'],
   filterableAttributes: ['node_count', 'coverage'],
   sortableAttributes: ['coverage', 'node_count'],
   rankingRules: ['words', 'typo', 'proximity', 'attribute', 'coverage:desc', 'exactness'],

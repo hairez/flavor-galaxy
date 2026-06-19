@@ -175,16 +175,24 @@ export function createMapper(names, aliasTable = {}) {
   const nameToIndex = new Map(names.map((n, i) => [n, i]));
 
   // Map a recipe's raw ingredient terms to a deduped, sorted array of node
-  // indices, plus the list of terms that did not map (for auditing).
+  // indices, plus the list of terms that did not map (for auditing). `mappedCount`
+  // is the number of ingredient terms that resolved to a node (before dedup), so
+  // callers can compute coverage as "fraction of ingredients that mapped" rather
+  // than the distinct-node count, which understates it when two terms share a node.
   function mapRecipe(terms) {
     const nodes = new Set();
     const unmapped = [];
+    let mappedCount = 0;
     for (const t of terms) {
       const r = mapTerm(t);
-      if (r.node != null) nodes.add(r.node);
-      else if (r.via !== 'empty') unmapped.push(t);
+      if (r.node != null) {
+        nodes.add(r.node);
+        mappedCount++;
+      } else if (r.via !== 'empty') {
+        unmapped.push(t);
+      }
     }
-    return { nodeIndices: [...nodes].sort((a, b) => a - b), unmapped };
+    return { nodeIndices: [...nodes].sort((a, b) => a - b), unmapped, mappedCount };
   }
 
   return { mapTerm, mapRecipe, invalidAliases, nameToIndex };

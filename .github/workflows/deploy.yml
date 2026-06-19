@@ -25,6 +25,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+        env:
+          # Configure the deployed recipe-search API origin via a repo variable
+          # (Settings > Secrets and variables > Actions > Variables). When unset,
+          # the build still succeeds and recipe search is disabled in the UI
+          # rather than pointing at localhost.
+          VITE_RECIPE_API: ${{ vars.VITE_RECIPE_API }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
