@@ -5,7 +5,7 @@ import { Engine, pretty } from '../engine';
 import { Store, pickIngredient, pickRecipe } from '../state';
 import { MODEL_META, SPECTRUM_ENDS, familyHex } from '../config';
 import { resolveImage } from '../images';
-import { searchRecipes, recipeSearchAvailable, type RecipeHit } from '../recipes';
+import { searchRecipes, sampleRecipes, recipeSearchAvailable, type RecipeHit } from '../recipes';
 
 function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -88,10 +88,10 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
       mode === 'ingredient' ? 'Search 1,790 ingredients…' : 'Search recipes…';
     input.value = '';
     closeResults();
-    if (mode === 'recipe' && !recipeSearchAvailable) {
-      showResultMessage('search-empty', 'recipe search is unavailable');
-    }
     input.focus();
+    // Recipe mode greets with suggestions (works even with no search backend);
+    // the "unavailable" notice only surfaces once the user actually types.
+    if (mode === 'recipe') openSuggestions();
   }
 
   function closeResults(): void {
@@ -177,39 +177,72 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
     }
   }
 
+  function recipeRow(hit: RecipeHit): HTMLLIElement {
+    // A recipe whose nodes all fall outside the current map (e.g. stale data)
+    // would otherwise select an empty constellation and dim the whole galaxy.
+    const nodes = hit.nodeIndices.filter((i) => i >= 0 && i < engine.count);
+    const selectable = nodes.length > 0;
+    const li = h('li', { class: selectable ? 'search-result' : 'search-result disabled' }, [
+      hit.title,
+    ]) as HTMLLIElement;
+    if (!selectable) li.setAttribute('title', 'no mapped ingredients on the map');
+    li.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      if (!selectable) return;
+      input.value = hit.title;
+      closeResults();
+      pickRecipe(store, { id: hit.id, title: hit.title, nodeIndices: nodes });
+    });
+    return li;
+  }
+
   function renderRecipeResults(hits: RecipeHit[]): void {
     if (!hits.length) return showResultMessage('search-empty', 'no recipes found');
+    results.replaceChildren(...hits.map(recipeRow));
+    results.removeAttribute('hidden');
+  }
+
+  // The "suggested recipes" popup: a fresh random sample from the bundled corpus,
+  // shown when the empty recipe box is hovered or focused. Static (no backend), so
+  // it works even when live search is unavailable. Re-samples on each open, and is
+  // a no-op outside recipe mode or once the user has typed a query.
+  function openSuggestions(): void {
+    if (mode !== 'recipe' || input.value.trim()) return;
+    cancelRecipeSearch(); // don't let a stale in-flight search overwrite the popup
+    const hits = sampleRecipes(6);
+    if (!hits.length) return;
     results.replaceChildren(
-      ...hits.map((hit) => {
-        // A recipe whose nodes all fall outside the current map (e.g. stale data)
-        // would otherwise select an empty constellation and dim the whole galaxy.
-        const nodes = hit.nodeIndices.filter((i) => i >= 0 && i < engine.count);
-        const selectable = nodes.length > 0;
-        const li = h('li', { class: selectable ? 'search-result' : 'search-result disabled' }, [
-          hit.title,
-        ]);
-        if (!selectable) li.setAttribute('title', 'no mapped ingredients on the map');
-        li.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          if (!selectable) return;
-          input.value = hit.title;
-          closeResults();
-          pickRecipe(store, { id: hit.id, title: hit.title, nodeIndices: nodes });
-        });
-        return li;
-      }),
+      h('li', { class: 'search-suggest-header' }, ['Suggested recipes']),
+      ...hits.map(recipeRow),
     );
     results.removeAttribute('hidden');
   }
 
+  // The suggestions popup can be opened by hover, so closing can't be a plain
+  // blur handler: it must not fire while the pointer is still over .search (moving
+  // from the input down onto a row) nor while the input is focused. Delayed so a
+  // row's mousedown lands before the list is torn down.
+  let hoveringSearch = false;
+  function maybeClose(): void {
+    setTimeout(() => {
+      if (document.activeElement === input || hoveringSearch) return;
+      closeResults();
+    }, 120);
+  }
+
   input.addEventListener('input', () => {
     if (mode === 'ingredient') renderResults(input.value);
-    else scheduleRecipeSearch(input.value);
+    else if (input.value.trim()) scheduleRecipeSearch(input.value);
+    else openSuggestions(); // box cleared: bring the suggestions back
   });
   input.addEventListener('focus', () => {
-    if (input.value && mode === 'ingredient') renderResults(input.value);
+    if (mode === 'ingredient') {
+      if (input.value) renderResults(input.value);
+    } else {
+      openSuggestions();
+    }
   });
-  input.addEventListener('blur', () => setTimeout(closeResults, 120));
+  input.addEventListener('blur', maybeClose);
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       const first = results.querySelector<HTMLLIElement>('.search-result');
@@ -218,6 +251,15 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
       closeResults();
       input.blur();
     }
+  });
+
+  search.addEventListener('mouseenter', () => {
+    hoveringSearch = true;
+    openSuggestions();
+  });
+  search.addEventListener('mouseleave', () => {
+    hoveringSearch = false;
+    maybeClose();
   });
 
   // --- Detail + neighbors ---
