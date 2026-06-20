@@ -168,6 +168,10 @@ body {
   z-index: 1;
   display: flex;
   flex-direction: column;
+  /* Center on the cross axis explicitly: Safari/WebKit does not stretch flex
+     items inside a <button>, so without this the shrink-wrapped spans align to
+     the start (left) and text-align alone can't center them. */
+  align-items: center;
   gap: 2px;
   padding: 9px 8px;
   border-radius: 10px;

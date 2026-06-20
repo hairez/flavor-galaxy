@@ -203,9 +203,9 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
   }
 
   // The "suggested recipes" popup: a fresh random sample from the bundled corpus,
-  // shown when the empty recipe box is hovered or focused. Static (no backend), so
-  // it works even when live search is unavailable. Re-samples on each open, and is
-  // a no-op outside recipe mode or once the user has typed a query.
+  // shown when the empty recipe box is focused. Static (no backend), so it works
+  // even when live search is unavailable. Re-samples on each open, and is a no-op
+  // outside recipe mode or once the user has typed a query.
   function openSuggestions(): void {
     if (mode !== 'recipe' || input.value.trim()) return;
     cancelRecipeSearch(); // don't let a stale in-flight search overwrite the popup
@@ -216,18 +216,6 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
       ...hits.map(recipeRow),
     );
     results.removeAttribute('hidden');
-  }
-
-  // The suggestions popup can be opened by hover, so closing can't be a plain
-  // blur handler: it must not fire while the pointer is still over .search (moving
-  // from the input down onto a row) nor while the input is focused. Delayed so a
-  // row's mousedown lands before the list is torn down.
-  let hoveringSearch = false;
-  function maybeClose(): void {
-    setTimeout(() => {
-      if (document.activeElement === input || hoveringSearch) return;
-      closeResults();
-    }, 120);
   }
 
   input.addEventListener('input', () => {
@@ -242,7 +230,7 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
       openSuggestions();
     }
   });
-  input.addEventListener('blur', maybeClose);
+  input.addEventListener('blur', () => setTimeout(closeResults, 120));
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       const first = results.querySelector<HTMLLIElement>('.search-result');
@@ -251,15 +239,6 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
       closeResults();
       input.blur();
     }
-  });
-
-  search.addEventListener('mouseenter', () => {
-    hoveringSearch = true;
-    openSuggestions();
-  });
-  search.addEventListener('mouseleave', () => {
-    hoveringSearch = false;
-    maybeClose();
   });
 
   // --- Detail + neighbors ---
