@@ -5,3 +5,8 @@ dist
 .vite
 # Raw model downloads cached by the prep script (re-fetchable from Hugging Face)
 scripts/.cache
+# Playwright / screenshot-capture artifacts (only curated docs/ assets are tracked)
+.playwright-mcp/
+*.webm
+test-results/
+playwright-report/

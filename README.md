@@ -5,6 +5,11 @@ Explore how flavor is shaped by *chemistry* versus how cooks actually *combine* 
 
 **Live:** https://hairez.github.io/flavor-galaxy/
 
+<p align="center">
+  <img src="docs/hero.png" width="100%"
+       alt="Flavor Galaxy: 1,790 cooking ingredients mapped as a point cloud, colored by food group, with a search and embedding-model panel floating on the left">
+</p>
+
 It visualizes the [Epicure](https://arxiv.org/abs/2605.22391) ingredient embeddings
 (Radzikowski & Chen). Epicure ships three sibling models that sit at different points on a
 recipe-context to chemistry spectrum:
@@ -19,6 +24,32 @@ recipe-context to chemistry spectrum:
 - **Switch models** and watch the whole cloud re-form - the same ingredient sits in a
   different neighborhood depending on whether you weight chemistry or culinary context.
 - **Color the galaxy** by food group, aroma family, or basic taste.
+
+<p align="center">
+  <img src="docs/recipe-models.gif" width="800"
+       alt="Animation: the Chicken Tikka Masala ingredient constellation glides to a new layout each time the embedding model switches between Chemistry, Core, and Co-occurrence">
+  <br>
+  <sub><em>The same recipe constellation, re-forming as you slide between the chemistry and recipe-context models. (Recipe search runs against an optional local backend; switching models is live.)</em></sub>
+</p>
+
+Pick a single ingredient instead of a recipe and the same thing happens - the
+whole cloud re-forms around it and its nearest neighbors shift along the
+chemistry / context spectrum. This part runs entirely in your browser on the
+live site:
+
+<p align="center">
+  <img src="docs/ingredient-models.gif" width="800"
+       alt="Animation: with garlic selected, the whole ingredient cloud re-forms and garlic's nearest-neighbor list changes as the embedding model switches between Co-occurrence, Chemistry, and Core">
+  <br>
+  <sub><em>Garlic stays put while the cloud re-forms beneath it; its neighbor list in the panel re-ranks per model.</em></sub>
+</p>
+
+<p align="center">
+  <img src="docs/color-by-aroma.png" width="100%"
+       alt="The same ingredient cloud recolored by aroma family, with a legend mapping colors to aroma groups">
+  <br>
+  <sub><em>Recolor the galaxy by food group, aroma family, or basic taste.</em></sub>
+</p>
 
 ### Reading the map
 
@@ -50,6 +81,10 @@ npm run dev      # local dev server
 npm run build    # type-check + production build to dist/
 npm run prep     # regenerate public/data from Hugging Face (rarely needed)
 ```
+
+The `docs/` screenshots and GIFs are regenerated with
+[`scripts/capture-screenshots.mjs`](scripts/capture-screenshots.mjs) (Playwright +
+ffmpeg, installed ad hoc - see the file header); it needs no recipe backend.
 
 Deploys to GitHub Pages automatically on push to `main` via `.github/workflows/deploy.yml`.
 
