@@ -125,9 +125,17 @@ if (!ONLY || ONLY === 'ingredient')
         await sleep(120);
       }
       // Park the cursor over the panel header (no point-hover, no neighbor-row
-      // hover) so no hover card lingers in the middle of the frame.
+      // hover). Parking alone isn't enough: jumping the cursor straight from a
+      // star onto the overlay panel never emits an onHover(null), so the hover
+      // preview card would otherwise stay frozen in the middle of every frame.
       await page.mouse.move(120, 92);
       await sleep(700);
+      // Dismiss the card directly - nothing re-hovers a star during the loop
+      // (model switches are clicks on panel buttons, never over the canvas).
+      await page.evaluate(() => {
+        const c = document.querySelector('.hover-card');
+        if (c) c.hidden = true;
+      });
     },
   }),
 );
