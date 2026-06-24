@@ -16,6 +16,9 @@ export const MODEL_META: ModelMeta[] = [
 
 export const SPECTRUM_ENDS = { left: 'Recipe context', right: 'Chemistry' };
 
+// Open-source home, linked from the top bar.
+export const REPO_URL = 'https://github.com/hairez/flavor-galaxy';
+
 // Distinct hues that read well on a dark background.
 const PALETTE_HEX = [
   '#f87171', // red
