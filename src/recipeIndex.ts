@@ -4,9 +4,9 @@
 // then only the term-postings shards a query touches and the doc-store shards
 // for the top hits are fetched on demand. No backend.
 //
-// Ranking reproduces server/src/searchIndex.ts: per query token, +6 if it hits
-// the title and +2 if it hits the ingredient text; +50 if the whole query is a
-// substring of the title; coverage as the final tiebreak. One intentional
+// Ranking rule (pinned by src/recipeIndex.test.mjs): per query token, +6 if it
+// hits the title and +2 if it hits the ingredient text; +50 if the whole query is
+// a substring of the title; coverage as the final tiebreak. One intentional
 // deviation: a query token only matches indexed terms it is a *prefix* of (so
 // "garl" -> "garlic"); interior substrings of a single token (e.g. "arli") are
 // not matched. Whole tokens, prefix typing, multi-token queries, and the +50
@@ -30,7 +30,7 @@ interface Manifest {
 const SEARCH_LIMIT = 12; // results shown in the dropdown
 const TOP_K = 50; // candidates whose doc records we load before the +50/coverage re-rank
 
-// Must match the tokenizer in the builder and server/src/searchIndex.ts.
+// Must match the tokenizer in the builder (scripts/build-recipe-index.mjs).
 const tokenize = (s: string): string[] => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 const prefixOf = (term: string): string => (term.length >= 2 ? term.slice(0, 2) : term);
 
@@ -231,7 +231,7 @@ export async function queryRecipeIndex(query: string, signal?: AbortSignal): Pro
     ingSets.push(ingSet);
   }
 
-  // Candidate docs = any doc hit by any token; base score per searchIndex.
+  // Candidate docs = any doc hit by any token; base score = title/ingredient hits.
   const candidates = new Map<number, number>();
   for (let i = 0; i < tokens.length; i++) {
     for (const d of titleSets[i]) candidates.set(d, (candidates.get(d) ?? 0) + m.scoring.titleToken);

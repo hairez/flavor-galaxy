@@ -8,18 +8,15 @@ import { loadRecipeIndex, queryRecipeIndex, type RecipeHit } from './recipeIndex
 
 export type { RecipeHit };
 
-// The static index always ships with the site, so the feature is available. A
-// genuine failure to load the index surfaces as a thrown error from
-// searchRecipes (never as empty results), which the UI shows as "search
-// unavailable" rather than a misleading "no recipes found".
-export const recipeSearchAvailable = true;
-
 // Start fetching the manifest as soon as the module loads (mirrors images.ts),
 // so the first query is fast. The no-op catch only silences an unhandled
 // rejection on this kick-off chain; searchRecipes re-awaits the same memoized
 // promise and rethrows the failure there.
 void loadRecipeIndex(import.meta.env.BASE_URL).catch(() => {});
 
+// Throws (never returns []) if the static index can't load, so a broken index
+// surfaces in the UI as "search unavailable" rather than a misleading "no recipes
+// found". An empty array means a genuinely empty result set.
 export async function searchRecipes(q: string, signal?: AbortSignal): Promise<RecipeHit[]> {
   await loadRecipeIndex(import.meta.env.BASE_URL); // throws if the index can't load
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');

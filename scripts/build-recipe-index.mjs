@@ -13,8 +13,8 @@
 //                            (title hits and ingredient hits, scored +6 / +2)
 //
 // The on-disk scoring (title substring +50, title token +6, ingredient token +2,
-// coverage tiebreak) mirrors server/src/searchIndex.ts so client ranking matches
-// the reference InMemoryIndex.
+// coverage tiebreak) is the recipe ranking rule, reproduced by the browser client
+// (src/recipeIndex.ts) and pinned by src/recipeIndex.test.mjs.
 
 import {
   readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, createReadStream,
@@ -34,8 +34,8 @@ const DOCS_PER_SHARD = 65536; // docId >> 16 -> shard, docId & 0xffff -> offset
 const SHARD_HARD_LIMIT = 90 * 1024 * 1024; // stay under GitHub's 100MB/file wall
 const SCORING = { titleSubstring: 50, titleToken: 6, ingToken: 2 };
 
-// Must stay byte-identical to the tokenizer in server/src/searchIndex.ts and the
-// client (src/recipeIndex.ts): lowercase, split on non-alphanumeric, drop empties.
+// Must stay byte-identical to the tokenizer in the client (src/recipeIndex.ts):
+// lowercase, split on non-alphanumeric, drop empties.
 const tokenize = (s) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 const prefixOf = (term) => (term.length >= 2 ? term.slice(0, 2) : term);
 

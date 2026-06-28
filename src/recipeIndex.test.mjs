@@ -1,5 +1,5 @@
-// Tests the static recipe-index client against a faithful reimplementation of the
-// reference scorer in server/src/searchIndex.ts, over the real seed index. Run:
+// Tests the static recipe-index client against an independent reimplementation of
+// the recipe ranking rule, over the real seed index. Run:
 //   npm run prep:index   (build the index first)
 //   node --test src/recipeIndex.test.mjs
 //
@@ -32,7 +32,7 @@ globalThis.fetch = async (url) => {
 
 const { loadRecipeIndex, queryRecipeIndex } = await import('./recipeIndex.ts');
 
-// Reference scorer, mirroring server/src/searchIndex.ts:46-71 exactly.
+// Reference scorer: the recipe ranking rule the static index must reproduce.
 const tokenize = (s) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 const docs = readFileSync(join(root, 'server/data/recipes.ndjson'), 'utf8')
   .split('\n')

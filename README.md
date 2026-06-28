@@ -29,7 +29,7 @@ recipe-context to chemistry spectrum:
   <img src="docs/recipe-models.gif" width="800"
        alt="Animation: the Chicken Tikka Masala ingredient constellation glides to a new layout each time the embedding model switches between Chemistry, Core, and Co-occurrence">
   <br>
-  <sub><em>The same recipe constellation, re-forming as you slide between the chemistry and recipe-context models. (Recipe search runs against an optional local backend; switching models is live.)</em></sub>
+  <sub><em>The same recipe constellation, re-forming as you slide between the chemistry and recipe-context models. Both recipe search and model switching run entirely in the browser.</em></sub>
 </p>
 
 Pick a single ingredient instead of a recipe and the same thing happens - the
@@ -68,6 +68,11 @@ Everything runs in the browser, with no backend:
    (names, layouts, labels, legends).
 2. The app loads those assets and computes nearest neighbors live as dot products on the
    normalized vectors. The galaxy is rendered with [deck.gl](https://deck.gl/).
+3. Recipe search is also fully client-side. `scripts/build-recipe-index.mjs` (run once,
+   output committed under `public/data/recipe-index/`) turns the recipe corpus into a small
+   prebuilt search index - a manifest plus binary postings shards keyed by search term and
+   a doc-store sharded by id. The browser fetches only the shards a query touches and ranks
+   results locally, so search needs no server or external API.
 
 Food group is a weak signal in this data (there is no meat/seafood category), so ingredients
 whose top two groups are too close are shown as a neutral grey **"Other"** rather than given a
@@ -77,10 +82,15 @@ misleading label.
 
 ```bash
 npm install
-npm run dev      # local dev server
-npm run build    # type-check + production build to dist/
-npm run prep     # regenerate public/data from Hugging Face (rarely needed)
+npm run dev          # local dev server
+npm run build        # type-check + production build to dist/
+npm test             # mapper + recipe-index unit tests
+npm run prep         # regenerate embedding assets from Hugging Face (rarely needed)
+npm run prep:index   # rebuild the recipe search index from server/data/recipes.ndjson
 ```
+
+The recipe corpus that feeds `prep:index` is built separately under `server/`
+(`cd server && npm run seed` for the bundled seed recipes). There is no backend.
 
 The `docs/` screenshots and GIFs are regenerated with
 [`scripts/capture-screenshots.mjs`](scripts/capture-screenshots.mjs) (Playwright +
