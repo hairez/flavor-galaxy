@@ -9,6 +9,8 @@ import { dirname, join } from 'node:path';
 import {
   normalizeTerm,
   stripPrepAdjectives,
+  stripQuantityUnit,
+  stripTrailingDescriptors,
   singularizeToken,
   singularCandidates,
   headNounCandidates,
@@ -41,6 +43,26 @@ test('stripPrepAdjectives drops leading prep words only', () => {
   assert.equal(stripPrepAdjectives('fresh_basil'), 'basil');
   assert.equal(stripPrepAdjectives('finely_chopped_onion'), 'onion');
   assert.equal(stripPrepAdjectives('olive_oil'), 'olive_oil');
+});
+
+test('stripQuantityUnit drops leading numbers, units, and "of"', () => {
+  assert.equal(stripQuantityUnit('1_cup_all_purpose_flour'), 'all_purpose_flour');
+  assert.equal(stripQuantityUnit('1_2_cup_flour'), 'flour'); // "1/2 cup" -> "1_2_cup"
+  assert.equal(stripQuantityUnit('2_cloves_garlic'), 'garlic');
+  assert.equal(stripQuantityUnit('1_can_of_tomatoes'), 'tomatoes');
+  assert.equal(stripQuantityUnit('500g_chicken'), 'chicken'); // digit-prefixed unit token
+  assert.equal(stripQuantityUnit('3_large_eggs'), 'large_eggs'); // stops at non-unit
+  assert.equal(stripQuantityUnit('flour'), 'flour'); // never empties
+  assert.equal(stripQuantityUnit('olive_oil'), 'olive_oil'); // no quantity to strip
+});
+
+test('stripTrailingDescriptors drops trailing descriptors and connectors', () => {
+  assert.equal(stripTrailingDescriptors('garlic_minced'), 'garlic');
+  assert.equal(stripTrailingDescriptors('parsley_finely_chopped'), 'parsley');
+  assert.equal(stripTrailingDescriptors('salt_to_taste'), 'salt');
+  assert.equal(stripTrailingDescriptors('butter_softened_divided'), 'butter');
+  assert.equal(stripTrailingDescriptors('olive_oil'), 'olive_oil'); // nothing trailing
+  assert.equal(stripTrailingDescriptors('chopped'), 'chopped'); // never empties
 });
 
 test('singularizeToken common rules', () => {
@@ -106,6 +128,38 @@ test('prep-adjective stripping reaches the canonical', () => {
   assert.equal(map('fresh basil'), 'basil');
   assert.equal(map('minced garlic'), 'garlic');
   assert.equal(map('boneless chicken'), 'chicken');
+});
+
+test('raw quantity-bearing ingredient lines map to the canonical', () => {
+  assert.equal(map('3 large eggs'), 'egg');
+  assert.equal(map('1 cup all-purpose flour'), 'flour');
+  assert.equal(map('2 cloves garlic, minced'), 'garlic');
+  assert.equal(map('1 can diced tomatoes'), 'tomato');
+  assert.equal(map('1/2 cup heavy cream'), 'cream');
+  assert.equal(map('salt to taste'), 'salt');
+  assert.equal(map('2 tablespoons olive oil'), 'olive_oil');
+});
+
+test('head_noun stage singularizes the trailing sub-phrase', () => {
+  // only the bare singular "onion" is canonical here, so "pearl onions" must
+  // reach it by singularizing the head-noun candidate "onions".
+  const m = createMapper(['onion'], {});
+  const r = m.mapTerm('pearl onions');
+  assert.equal(r.name, 'onion');
+  assert.equal(r.via, 'head_noun');
+});
+
+test('expanded aliases: British forms and synonyms resolve', () => {
+  assert.equal(map('cornflour'), 'cornstarch');
+  assert.equal(map('caster sugar'), 'sugar');
+  assert.equal(map('icing sugar'), 'sugar');
+  assert.equal(map('bicarbonate of soda'), 'baking_soda');
+  assert.equal(map('sea salt'), 'salt');
+  assert.equal(map('vanilla extract'), 'vanilla');
+  assert.equal(map('chicken breast'), 'chicken');
+  assert.equal(map('boneless skinless chicken breasts'), 'chicken');
+  assert.equal(map('streaky bacon'), 'bacon');
+  assert.equal(map('chicken stock'), 'chicken_broth');
 });
 
 test('inherently-plural canonicals survive (exact wins before singularize)', () => {

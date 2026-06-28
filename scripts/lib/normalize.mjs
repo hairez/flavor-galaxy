@@ -16,6 +16,34 @@ const PREP_ADJECTIVES = new Set([
   'warm', 'softened', 'melted', 'finely', 'roughly', 'thinly',
 ]);
 
+// Measure/quantity words that prefix the food term in a raw ingredient line
+// ("2 cups flour", "1 clove garlic", "1 can of tomatoes"). Nouns, so kept
+// separate from PREP_ADJECTIVES. Used to produce a de-quantified candidate.
+const MEASURE_UNITS = new Set([
+  'cup', 'cups', 'tbsp', 'tbsps', 'tablespoon', 'tablespoons', 'tsp', 'tsps',
+  'teaspoon', 'teaspoons', 'oz', 'ounce', 'ounces', 'g', 'gram', 'grams',
+  'kg', 'kilogram', 'kilograms', 'mg', 'ml', 'cl', 'dl', 'l', 'litre', 'litres',
+  'liter', 'liters', 'lb', 'lbs', 'pound', 'pounds', 'clove', 'cloves', 'can',
+  'cans', 'jar', 'jars', 'tin', 'tins', 'package', 'packages', 'packet',
+  'packets', 'pkg', 'pinch', 'pinches', 'dash', 'dashes', 'slice', 'slices',
+  'stick', 'sticks', 'piece', 'pieces', 'bunch', 'bunches', 'sprig', 'sprigs',
+  'head', 'heads', 'handful', 'handfuls', 'quart', 'quarts', 'pint', 'pints',
+  'gallon', 'gallons', 'cc', 'box', 'boxes', 'bottle', 'bottles', 'cube',
+  'cubes', 'fl',
+]);
+
+// Trailing descriptor words that follow the food term in a raw line ("garlic,
+// minced", "salt to taste", "parsley for garnish"). PREP_ADJECTIVES reappear
+// trailing, plus a set of trailing-only descriptors and connector words so a
+// whole trailing phrase ("...to taste") strips down to the food term.
+const TRAILING_DESCRIPTORS = new Set([
+  ...PREP_ADJECTIVES,
+  'taste', 'garnish', 'optional', 'divided', 'needed', 'serving', 'serve',
+  'drained', 'rinsed', 'beaten', 'halved', 'quartered', 'cubed', 'crumbled',
+  'julienned', 'pitted', 'seeded', 'stemmed', 'trimmed', 'washed', 'well',
+  'plus', 'more', 'to', 'for', 'as', 'if', 'at', 'room', 'about',
+]);
+
 // Strip accents, lowercase, drop punctuation, collapse whitespace, and join on
 // underscores so "Crème Fraîche" -> "creme_fraiche" and "green onion" ->
 // "green_onion".
@@ -38,6 +66,32 @@ export function stripPrepAdjectives(norm) {
   let i = 0;
   while (i < parts.length - 1 && PREP_ADJECTIVES.has(parts[i])) i++;
   return parts.slice(i).join('_');
+}
+
+// A candidate with a leading quantity/unit phrase removed: "2_cups_flour" ->
+// "flour", "1_can_of_tomatoes" -> "tomatoes". Drops leading tokens that start
+// with a digit (covers "3", "1", "500g", "00"), measure units, and the
+// connector "of", stopping at the first food token. Never empties the term.
+export function stripQuantityUnit(norm) {
+  const parts = norm.split('_');
+  let i = 0;
+  while (
+    i < parts.length - 1 &&
+    (/^[0-9]/.test(parts[i]) || MEASURE_UNITS.has(parts[i]) || parts[i] === 'of')
+  ) {
+    i++;
+  }
+  return parts.slice(i).join('_');
+}
+
+// A candidate with trailing descriptors removed: "garlic_minced" -> "garlic",
+// "salt_to_taste" -> "salt". Strips from the right while tokens are descriptors
+// or connectors, stopping at the first food token. Never empties the term.
+export function stripTrailingDescriptors(norm) {
+  const parts = norm.split('_');
+  let end = parts.length;
+  while (end > 1 && TRAILING_DESCRIPTORS.has(parts[end - 1])) end--;
+  return parts.slice(0, end).join('_');
 }
 
 // Best-effort English singularization of a single token. Conservative: only the
@@ -135,9 +189,19 @@ export function createMapper(names, aliasTable = {}) {
   function mapTerm(raw) {
     const norm = normalizeTerm(raw);
     if (!norm) return { node: null, name: null, via: 'empty', norm };
-    const candidates = [norm];
-    const stripped = stripPrepAdjectives(norm);
-    if (stripped && stripped !== norm) candidates.push(stripped);
+    // Candidate forms, most-conservative first so an exact hit on the raw norm
+    // always wins. Each cleaning step (de-quantify, drop leading prep words,
+    // drop trailing descriptors) only adds candidates; the cascade still only
+    // accepts one that lands on a canonical name, so over-stripping is harmless.
+    const candidates = [];
+    const add = (c) => { if (c && !candidates.includes(c)) candidates.push(c); };
+    for (const base of [norm, stripQuantityUnit(norm)]) {
+      add(base);
+      add(stripPrepAdjectives(base));
+      const trimmed = stripTrailingDescriptors(base);
+      add(trimmed);
+      add(stripPrepAdjectives(trimmed));
+    }
 
     // 2. exact
     for (const c of candidates) if (nameSet.has(c)) return hit(c, 'exact', norm);
@@ -150,10 +214,16 @@ export function createMapper(names, aliasTable = {}) {
         if (aliases.has(s)) return hit(aliases.get(s), 'alias', norm);
       }
     }
-    // 5. head-noun (longest canonical trailing sub-phrase)
+    // 5. head-noun (longest canonical trailing sub-phrase, also singularized so
+    //    "pearl onions" -> "onion" when only the bare singular is canonical)
     for (const c of candidates) {
       for (const h of headNounCandidates(c)) {
         if (nameSet.has(h)) return hit(h, 'head_noun', norm);
+        if (aliases.has(h)) return hit(aliases.get(h), 'alias', norm);
+        for (const s of singularCandidates(h)) {
+          if (nameSet.has(s)) return hit(s, 'head_noun', norm);
+          if (aliases.has(s)) return hit(aliases.get(s), 'alias', norm);
+        }
       }
     }
     // 6. bounded fuzzy (typos only)
