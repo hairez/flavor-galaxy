@@ -5,7 +5,7 @@ import { Engine, pretty } from '../engine';
 import { Store, pickIngredient, pickRecipe } from '../state';
 import { MODEL_META, SPECTRUM_ENDS, familyHex } from '../config';
 import { resolveImage } from '../images';
-import { searchRecipes, sampleRecipes, recipeSearchAvailable, type RecipeHit } from '../recipes';
+import { searchRecipes, sampleRecipes, type RecipeHit } from '../recipes';
 
 function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -89,8 +89,8 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
     input.value = '';
     closeResults();
     input.focus();
-    // Recipe mode greets with suggestions (works even with no search backend);
-    // the "unavailable" notice only surfaces once the user actually types.
+    // Recipe mode greets with suggestions (instant, from the bundled pool);
+    // the live index is fetched lazily when the user actually types.
     if (mode === 'recipe') openSuggestions();
   }
 
@@ -157,7 +157,6 @@ export function createSpine(root: HTMLElement, engine: Engine, store: Store): vo
   function scheduleRecipeSearch(raw: string): void {
     const q = raw.trim();
     if (debTimer) clearTimeout(debTimer);
-    if (!recipeSearchAvailable) return showResultMessage('search-empty', 'recipe search is unavailable');
     if (!q) return closeResults();
     debTimer = window.setTimeout(() => runRecipeSearch(q), 220);
   }
