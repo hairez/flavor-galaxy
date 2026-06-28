@@ -11,7 +11,8 @@
     "prep": "node scripts/prep-data.mjs",
     "prep:recipes": "node scripts/build-recipe-pool.mjs",
     "prep:index": "node scripts/build-recipe-index.mjs",
-    "test": "node --test scripts/lib/normalize.test.mjs src/recipeIndex.test.mjs src/recipeIndex.error.test.mjs"
+    "prep:corpus": "node scripts/prep-recipes.mjs",
+    "test": "node --test scripts/lib/normalize.test.mjs scripts/recipes/pipeline.test.mjs src/recipeIndex.test.mjs src/recipeIndex.error.test.mjs"
   },
   "dependencies": {
     "@deck.gl/core": "^9.3.4",

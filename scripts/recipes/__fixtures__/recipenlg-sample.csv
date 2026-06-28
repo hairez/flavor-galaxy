@@ -1,0 +1,6 @@
+,title,ingredients,directions,link,source,NER
+0,Garlic Tomato Pasta,"[""3 cloves garlic"", ""2 tomatoes""]","[""Cook it.""]",example.com/1,Gathered,"[""garlic"", ""tomato"", ""olive oil"", ""basil""]"
+1,Chicken Fried Rice,"[""1 lb chicken"", ""2 cups rice""]","[""Fry it.""]",example.com/2,Gathered,"[""chicken"", ""rice"", ""egg"", ""scallion""]"
+2,Simple Onion Salad,"[""1 onion"", ""olive oil""]","[""Toss it.""]",example.com/3,Gathered,"[""onion"", ""tomato"", ""olive oil""]"
+3,Garlic Tomato Pasta,"[""3 cloves garlic"", ""2 tomatoes""]","[""Cook it.""]",example.com/1,Gathered,"[""garlic"", ""tomato"", ""olive oil"", ""basil""]"
+4,Mystery Dish,"[""1 cup xyzzy""]","[""Conjure it.""]",example.com/5,Gathered,"[""xyzzy"", ""qwerty""]"
